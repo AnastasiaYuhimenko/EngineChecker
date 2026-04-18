@@ -20,6 +20,19 @@ class AudioRecorder: NSObject, ObservableObject {
 	@Published private(set) var lastRecordingURL: URL?
 	@Published var waveformSamples: [CGFloat] = Array(repeating: 0.05, count: 100)
 
+	/// Идентификатор ТС для `RequestModel.vehicle_id` (multipart).
+	@Published var vehicleId: String = ""
+	/// Тип сегмента записи (`idle` / `high_hold` / `background`).
+	@Published var segmentType: RequestModel.SegmentType = .idle
+
+	/// Сегменты уже остановленных записей в текущей «сессии» (для склейки при отправке).
+	private var completedSegmentURLs: [URL] = []
+
+	/// Можно продолжить запись после `stopRecording()` в тот же логический файл (новый сегмент).
+	var canContinueRecording: Bool {
+		!completedSegmentURLs.isEmpty && !isRecording
+	}
+
 	private let minPower: Float = -50
 	private let maxWaveformSamples = 100
 	private var meterTimer: Timer?
@@ -50,6 +63,20 @@ class AudioRecorder: NSObject, ObservableObject {
 
 	func startRecording() {
 		logger.info("startRecording called")
+		completedSegmentURLs.removeAll()
+		beginRecordingNewSegment(shouldResetWaveform: true)
+	}
+
+	func continueRecording() {
+		logger.info("continueRecording called")
+		guard canContinueRecording else {
+			logger.warning("continueRecording ignored — no completed segments or already recording")
+			return
+		}
+		beginRecordingNewSegment(shouldResetWaveform: false)
+	}
+
+	private func beginRecordingNewSegment(shouldResetWaveform: Bool) {
 		let session = AVAudioSession.sharedInstance()
 		do {
 			try session.setCategory(.playAndRecord, mode: .default)
@@ -80,7 +107,9 @@ class AudioRecorder: NSObject, ObservableObject {
 			audioRecorder?.record()
 			isRecording = true
 			lastRecordingURL = fileName
-			resetWaveform()
+			if shouldResetWaveform {
+				resetWaveform()
+			}
 			startMeterUpdates()
 			logger.info("Recording started successfully")
 		} catch {
@@ -90,22 +119,25 @@ class AudioRecorder: NSObject, ObservableObject {
 
 	func stopRecording() {
 		logger.info("stopRecording called")
+		let shouldCommitSegment = isRecording
 		audioRecorder?.stop()
 		isRecording = false
 		stopMeterUpdates()
-		if let url = lastRecordingURL {
-			logger.info("Recording stopped. File saved at: \(url.path)")
+		if let url = lastRecordingURL, shouldCommitSegment {
+			completedSegmentURLs.append(url)
+			logger.info("Recording stopped. File saved at: \(url.path), segments: \(self.completedSegmentURLs.count)")
 		}
 	}
 
 	func uploadLastRecording() {
 		logger.info("uploadLastRecording called")
-		guard let fileURL = lastRecordingURL else {
+		guard lastRecordingURL != nil || !completedSegmentURLs.isEmpty else {
 			logger.warning("No recording file available for upload")
 			uploadMessage = "Нет записи для отправки"
 			return
 		}
-		logger.info("Preparing to upload file: \(fileURL.lastPathComponent)")
+		let segments = completedSegmentURLs
+		logger.info("Preparing to upload, segment count: \(segments.count)")
 
 		Task {
 			await MainActor.run {
@@ -116,11 +148,12 @@ class AudioRecorder: NSObject, ObservableObject {
 			logger.debug("Upload state set - isUploading: true")
 
 			do {
+				let fileURL = try Self.makeUploadURL(from: segments)
 				let responseBody = try await uploadFile(fileURL: fileURL)
-				logger.info("Upload successful - result: \(responseBody.result ?? false), anomalyScore: \(responseBody.anomalyScore ?? -1)")
+				logger.info("Upload successful - label: \(responseBody.label ?? "nil"), anomalyScore: \(responseBody.anomalyScore ?? -1)")
 				await MainActor.run {
 					self.classifyAnswer = responseBody
-					self.uploadMessage = responseBody.message ?? "Успешно отправлено"
+					self.uploadMessage = responseBody.label ?? "Успешно отправлено"
 					self.isUploading = false
 				}
 			} catch {
@@ -145,10 +178,20 @@ class AudioRecorder: NSObject, ObservableObject {
 		request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 		logger.debug("Request configured - method: POST, boundary: \(boundary)")
 
+		let durationSec = try Self.wavDurationSeconds(at: fileURL)
+		let meta = RequestModel(
+			vehicleId: vehicleId.isEmpty ? "unknown" : vehicleId,
+			durationSec: durationSec,
+			segmentType: segmentType
+		)
+
 		let fileData = try Data(contentsOf: fileURL)
-		logger.debug("File data loaded - size: \(fileData.count) bytes")
+		logger.debug("File data loaded - size: \(fileData.count) bytes, durationSec: \(durationSec)")
 		
 		var body = Data()
+		body.appendMultipartField(boundary: boundary, name: "vehicle_id", value: meta.vehicleId)
+		body.appendMultipartField(boundary: boundary, name: "segment_type", value: meta.segmentType.rawValue)
+		body.appendMultipartField(boundary: boundary, name: "duration_sec", value: String(format: "%.6f", meta.durationSec))
 		body.append("--\(boundary)\r\n")
 		body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileURL.lastPathComponent)\"\r\n")
 		body.append("Content-Type: audio/wav\r\n\r\n")
@@ -179,8 +222,8 @@ class AudioRecorder: NSObject, ObservableObject {
 		}
 
 		do {
-			let decoded = try JSONDecoder().decode(ClassifyAnswer.self, from: data)
-			logger.info("Response decoded successfully - result: \(decoded.result ?? false), message: \(decoded.message ?? "nil")")
+			let decoded = try Self.decodeClassifyResponse(from: data)
+			logger.info("Response decoded successfully - label: \(decoded.label ?? "nil"), anomaly_score: \(decoded.anomalyScore.map { String($0) } ?? "nil")")
 			return decoded
 		} catch {
 			logger.error("Failed to decode response: \(error.localizedDescription)")
@@ -232,11 +275,163 @@ class AudioRecorder: NSObject, ObservableObject {
 		uploadMessage = nil
 		classifyAnswer = nil
 	}
+
+	private static func wavDurationSeconds(at url: URL) throws -> Double {
+		let file = try AVAudioFile(forReading: url)
+		let rate = file.fileFormat.sampleRate
+		guard rate > 0 else { return 0 }
+		return Double(file.length) / rate
+	}
+
+	private static func decodeClassifyResponse(from data: Data) throws -> ClassifyAnswer {
+		let decoder = JSONDecoder()
+		if let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+		   obj["items"] is [Any] {
+			let batch = try decoder.decode(BatchClassifyResponse.self, from: data)
+			guard let first = batch.items.first else {
+				throw NSError(
+					domain: "Upload",
+					code: -3,
+					userInfo: [NSLocalizedDescriptionKey: "Пустой ответ batch"]
+				)
+			}
+			return first
+		}
+		return try decoder.decode(ClassifyAnswer.self, from: data)
+	}
+
+	private struct WavFormat: Equatable {
+		let sampleRate: UInt32
+		let channels: UInt16
+		let bitsPerSample: UInt16
+	}
+
+	/// Один сегмент — как есть; несколько — склейка PCM в один WAV (те же параметры, что у `AVAudioRecorder`).
+	private static func makeUploadURL(from segments: [URL]) throws -> URL {
+		guard !segments.isEmpty else {
+			throw NSError(domain: "AudioRecorder", code: 2, userInfo: [NSLocalizedDescriptionKey: "Нет сегментов записи"])
+		}
+		if segments.count == 1 {
+			return segments[0]
+		}
+		return try mergeWavSegmentFiles(segments)
+	}
+
+	private static func mergeWavSegmentFiles(_ urls: [URL]) throws -> URL {
+		var combinedPCM = Data()
+		var refFormat: WavFormat?
+		for url in urls {
+			let data = try Data(contentsOf: url)
+			let (fmt, pcm) = try extractWavPCM(data)
+			if let r = refFormat {
+				guard r == fmt else {
+					throw NSError(domain: "AudioRecorder", code: 3, userInfo: [NSLocalizedDescriptionKey: "Формат WAV сегментов не совпадает"])
+				}
+			} else {
+				refFormat = fmt
+			}
+			combinedPCM.append(pcm)
+		}
+		guard let format = refFormat else {
+			throw NSError(domain: "AudioRecorder", code: 4, userInfo: [NSLocalizedDescriptionKey: "Не удалось прочитать WAV"])
+		}
+		let wavData = buildWav(pcm: combinedPCM, format: format)
+		let out = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+			.appendingPathComponent("merged-\(Int(Date().timeIntervalSince1970)).wav")
+		try wavData.write(to: out, options: .atomic)
+		logger.info("Merged \(urls.count) segments into \(out.lastPathComponent)")
+		return out
+	}
+
+	private static func extractWavPCM(_ data: Data) throws -> (WavFormat, Data) {
+		guard data.count >= 12 else {
+			throw NSError(domain: "AudioRecorder", code: 5, userInfo: [NSLocalizedDescriptionKey: "Слишком короткий WAV"])
+		}
+		guard String(data: data.subdata(in: 0..<4), encoding: .ascii) == "RIFF",
+			  String(data: data.subdata(in: 8..<12), encoding: .ascii) == "WAVE" else {
+			throw NSError(domain: "AudioRecorder", code: 6, userInfo: [NSLocalizedDescriptionKey: "Некорректный RIFF/WAVE"])
+		}
+		var offset = 12
+		var format: WavFormat?
+		var pcm = Data()
+		while offset + 8 <= data.count {
+			let chunkId = String(data: data.subdata(in: offset..<(offset + 4)), encoding: .ascii) ?? ""
+			let chunkSize = Int(readUInt32LE(data, at: offset + 4))
+			let contentStart = offset + 8
+			let contentEnd = contentStart + chunkSize
+			guard contentEnd <= data.count else {
+				throw NSError(domain: "AudioRecorder", code: 7, userInfo: [NSLocalizedDescriptionKey: "Обрезанный WAV"])
+			}
+			if chunkId == "fmt " {
+				let channels = readUInt16LE(data, at: contentStart + 2)
+				let sampleRate = readUInt32LE(data, at: contentStart + 4)
+				let bits = readUInt16LE(data, at: contentStart + 14)
+				format = WavFormat(sampleRate: sampleRate, channels: channels, bitsPerSample: bits)
+			} else if chunkId == "data" {
+				pcm.append(data.subdata(in: contentStart..<contentEnd))
+			}
+			offset = contentEnd + (chunkSize % 2)
+		}
+		guard let f = format, !pcm.isEmpty else {
+			throw NSError(domain: "AudioRecorder", code: 8, userInfo: [NSLocalizedDescriptionKey: "Нет PCM в WAV"])
+		}
+		return (f, pcm)
+	}
+
+	private static func buildWav(pcm: Data, format: WavFormat) -> Data {
+		let blockAlign = UInt16(format.channels) * format.bitsPerSample / 8
+		let byteRate = format.sampleRate * UInt32(blockAlign)
+		let dataSize = UInt32(pcm.count)
+		let riffChunkSize = 36 + dataSize
+
+		var out = Data()
+		out.append(contentsOf: "RIFF".utf8)
+		out.append(contentsOf: riffChunkSize.leBytes)
+		out.append(contentsOf: "WAVE".utf8)
+		out.append(contentsOf: "fmt ".utf8)
+		out.append(contentsOf: UInt32(16).leBytes)
+		out.append(contentsOf: UInt16(1).leBytes)
+		out.append(contentsOf: format.channels.leBytes)
+		out.append(contentsOf: format.sampleRate.leBytes)
+		out.append(contentsOf: byteRate.leBytes)
+		out.append(contentsOf: blockAlign.leBytes)
+		out.append(contentsOf: format.bitsPerSample.leBytes)
+		out.append(contentsOf: "data".utf8)
+		out.append(contentsOf: dataSize.leBytes)
+		out.append(pcm)
+		return out
+	}
+
+	private static func readUInt16LE(_ data: Data, at offset: Int) -> UInt16 {
+		data.withUnsafeBytes { buf in
+			buf.loadUnaligned(fromByteOffset: offset, as: UInt16.self).littleEndian
+		}
+	}
+
+	private static func readUInt32LE(_ data: Data, at offset: Int) -> UInt32 {
+		data.withUnsafeBytes { buf in
+			buf.loadUnaligned(fromByteOffset: offset, as: UInt32.self).littleEndian
+		}
+	}
+}
+
+private extension FixedWidthInteger {
+	var leBytes: Data {
+		var v = self.littleEndian
+		return Swift.withUnsafeBytes(of: &v) { Data($0) }
+	}
 }
 
 private extension Data {
 	mutating func append(_ string: String) {
 		guard let data = string.data(using: .utf8) else { return }
 		append(data)
+	}
+
+	mutating func appendMultipartField(boundary: String, name: String, value: String) {
+		append("--\(boundary)\r\n")
+		append("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+		append(value)
+		append("\r\n")
 	}
 }

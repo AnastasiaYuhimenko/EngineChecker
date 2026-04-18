@@ -73,7 +73,7 @@ struct ResultScreen: View {
 					}
 				}
 				
-				if let message = classification?.message, !isAwaitingResult {
+				if let message = classification?.label, !isAwaitingResult {
 					Text(message)
 						.font(.subheadline)
 						.foregroundStyle(Color.gray)
@@ -104,36 +104,53 @@ struct ResultScreen: View {
 							RoundedRectangle(cornerRadius: 15)
 								.fill(Color.accent.opacity(0.1))
 						)
-						.frame(height: 170)
+						.frame(height: 230)
 						.padding(.horizontal, 24)
 					
-					VStack(alignment: .leading, spacing: 8) {
+					VStack(alignment: .leading, spacing: 6) {
 						Text("SERVER RESPONSE")
-							.font(.subheadline)
+							.font(.headline)
 							.padding(.bottom, 4)
-							.offset(y: -20)
-						HStack {
-							Text("result: ")
-								.font(.footnote)
-							Text((classification?.result).map { String($0) } ?? "—")
-								.foregroundStyle(Color.accent)
-								.font(.footnote)
-						}
+							.offset(y: -40)
+//						HStack {
+//							Text("result: ")
+//								.font(.footnote)
+//							Text((classification?.result).map { String($0) } ?? "—")
+//								.foregroundStyle(Color.accent)
+//								.font(.footnote)
+//						}
 						
 						HStack(alignment: .top) {
 							Text("message: ")
-								.font(.footnote)
-							Text(classification?.message ?? "—")
-								.lineLimit(3)
-								.font(.footnote)
+								.font(.subheadline)
+							Text(classification?.label ?? "—")
+								.lineLimit(2)
+								.font(.subheadline)
 						}
 						
 						HStack {
 							Text("anomaly_score: ")
-								.font(.footnote)
+								.font(.subheadline)
 							Text("\(String(format: "%.2f", classification?.anomalyScore ?? 0))")
 								.foregroundStyle(Color(#colorLiteral(red: 1, green: 0.4225196242, blue: 0.007212365046, alpha: 1)))
-								.font(.footnote)
+								.font(.subheadline)
+						}
+						
+						HStack {
+							Text("rpm_estimate: ")
+								.font(.subheadline)
+							Text(classification?.rpmEstimate.map { String(format: "%.1f", $0) } ?? "—")
+								.foregroundStyle(Color.cyan)
+								.font(.subheadline)
+						}
+						
+
+						HStack {
+							Text("model_version: ")
+								.font(.subheadline)
+							Text(classification?.model_version.isEmpty == false ? classification!.model_version : "—")
+								.foregroundStyle(Color.purple)
+								.font(.subheadline)
 						}
 					}
 					.font(.caption)
@@ -176,7 +193,14 @@ struct ResultScreen: View {
 }
 
 #Preview {
-	let healthy = ClassifyAnswer(result: true, message: "Normal operation", anomalyScore: 0.08)
+	let healthy = ClassifyAnswer(
+		filename: "recording_001.wav",
+		label: "Normal operation",
+		anomalyScore: 0.08,
+		rpmEstimate: 2450.5,
+		model_version: "v1.2.0",
+		result: false
+	)
 	ResultScreen()
 		.environmentObject(MainScreenVIewModel(recorder: AudioRecorder(answer: healthy)))
 }

@@ -150,7 +150,7 @@ struct BatchItemResultView: View {
 				.font(.custom("Orbitron-Bold", size: 22))
 				.foregroundStyle(!(item.result ?? false) ? Color.green : Color.red)
 			
-			if let message = item.message {
+			if let message = item.label {
 				Text(message)
 					.font(.subheadline)
 					.foregroundStyle(Color.gray)
@@ -240,7 +240,7 @@ struct BatchItemResultView: View {
 				
 				HStack {
 					Text("message: ")
-					Text(item.message ?? "—")
+					Text(item.label ?? "—")
 						.lineLimit(1)
 				}
 				

@@ -12,6 +12,15 @@ private let logger = Logger(subsystem: "com.enginechecker.app", category: "ScanS
 
 struct ScanScreen: View {
 	@EnvironmentObject var mainScreenViewModel: MainScreenVIewModel
+
+	private var stopOrContinueLabel: String {
+		let r = mainScreenViewModel.recorder
+		if r.isUploading { return "Sending..." }
+		if r.isRecording { return "Stop" }
+		if r.canContinueRecording { return "Continue" }
+		return "Record"
+	}
+
     var body: some View {
 		NavigationStack {
 			ZStack {
@@ -21,39 +30,91 @@ struct ScanScreen: View {
 					.foregroundStyle(Color.cletka)
 					.ignoresSafeArea()
 				
-				VStack {
+				VStack() {
+					VechicleIdField
+					
+					Picker("", selection: $mainScreenViewModel.recorder.segmentType) {
+						ForEach(RequestModel.SegmentType.allCases, id: \.self) { type in
+							Text(type.rawValue).tag(type)
+								
+						}
+					}
+					
+					.pickerStyle(.menu)
+					.accentColor(.white)
+					.padding(.horizontal)
+					.frame(maxWidth: .infinity, alignment: .leading)
+					.frame(height: 40)
+					.background(
+						RoundedRectangle(cornerRadius: 10)
+							.stroke(Color.accent, lineWidth: 3)
+					)
+					.padding()
+					
 					LiveWaveformView(samples: mainScreenViewModel.recorder.waveformSamples, isRecording: mainScreenViewModel.recorder.isRecording)
 						.frame(height: 100)
 						.padding(.horizontal)
-					
-				Button {
-					logger.info("Send button tapped")
-					if mainScreenViewModel.recorder.isRecording {
-						logger.debug("Stopping active recording before upload")
-						mainScreenViewModel.recorder.stopRecording()
-					}
-					logger.info("Initiating upload and navigating to result screen")
-					mainScreenViewModel.recorder.uploadLastRecording()
-					withAnimation(.easeInOut(duration: 0.4)) {
-						mainScreenViewModel.screen = .result
-					}
-				} label: {
-						ZStack {
+					HStack {
+						Button {
+							logger.info("Stop button tapped")
+							if mainScreenViewModel.recorder.isRecording {
+								logger.debug("Stopping active recording")
+								mainScreenViewModel.recorder.stopRecording()
+							} else if mainScreenViewModel.recorder.canContinueRecording {
+								logger.debug("Continuing recording session")
+								mainScreenViewModel.recorder.continueRecording()
+							} else {
+								mainScreenViewModel.recorder.startRecording()
+							}
+						} label: {
+							ZStack {
 								RoundedRectangle(cornerRadius: 15)
-								.foregroundStyle(Color.accent)
-								.frame(width: 230, height: 50)
-								.opacity(0.3)
+									.foregroundStyle(Color.accent)
+									.frame(width: 150, height: 50)
+									.opacity(0.3)
 								RoundedRectangle(cornerRadius: 15)
-								.stroke(lineWidth: 3)
-								.foregroundStyle(Color.accent)
-							
-								.frame(width: 230, height: 50)
-							Text(mainScreenViewModel.recorder.isUploading ? "Sending..." : "Send")
-								.foregroundStyle(Color.white)
-								.font(.custom("Orbitron-Bold", size: 24))
+									.stroke(lineWidth: 3)
+									.foregroundStyle(Color.accent)
+								
+									.frame(width: 150, height: 50)
+								Text(stopOrContinueLabel)
+									.foregroundStyle(Color.white)
+									.font(.custom("Orbitron-Bold", size: 24))
+							}
 						}
+						.padding(.trailing)
+						
+						Button {
+							logger.info("Send button tapped")
+							if mainScreenViewModel.recorder.isRecording {
+								logger.debug("Stopping active recording before upload")
+								mainScreenViewModel.recorder.stopRecording()
+							}
+							logger.info("Initiating upload and navigating to result screen")
+							mainScreenViewModel.recorder.uploadLastRecording()
+							withAnimation(.easeInOut(duration: 0.4)) {
+								mainScreenViewModel.screen = .result
+							}
+						} label: {
+							ZStack {
+								RoundedRectangle(cornerRadius: 15)
+									.foregroundStyle(Color.accent)
+									.frame(width: 150, height: 50)
+									.opacity(0.3)
+								RoundedRectangle(cornerRadius: 15)
+									.stroke(lineWidth: 3)
+									.foregroundStyle(Color.accent)
+								
+									.frame(width: 150, height: 50)
+								Text(mainScreenViewModel.recorder.isUploading ? "Sending..." : "Send")
+									.foregroundStyle(Color.white)
+									.font(.custom("Orbitron-Bold", size: 24))
+							}
+						}
+						.padding(.leading)
 					}
 				}
+				
 			}
 		}
     }
@@ -75,7 +136,7 @@ private struct LiveWaveformView: View {
 			ForEach(samples.indices, id: \.self) { index in
 				Capsule()
 					.fill(isRecording ? color(for: samples[index]) : Color.second.opacity(0.35))
-					.frame(width: 3, height: max(6, samples[index] * 60))
+					.frame(width: 3.5, height: max(6, samples[index] * 60))
 			}
 		}
 		.frame(maxWidth: .infinity)
@@ -91,3 +152,28 @@ private struct LiveWaveformView: View {
 			.opacity(0.82 + (0.18 * loudness))
 	}
 }
+
+
+extension ScanScreen {
+	var VechicleIdField: some View {
+		TextField(
+			"",
+			text: $mainScreenViewModel.recorder.vehicleId,
+			prompt: Text("Vechicle ID").foregroundStyle(Color.white.opacity(0.65))
+		)
+		.textFieldStyle(.plain)
+		.textInputAutocapitalization(.never)
+		.autocorrectionDisabled()
+		.tint(Color.white)
+		.foregroundStyle(Color.white)
+		.padding(.horizontal, 12)
+		.frame(height: 40)
+		.contentShape(Rectangle())
+		.background(
+			RoundedRectangle(cornerRadius: 10)
+				.stroke(Color.accent, lineWidth: 3)
+		)
+		.padding()
+	}
+}
+
