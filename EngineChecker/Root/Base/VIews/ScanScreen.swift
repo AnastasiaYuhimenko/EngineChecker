@@ -22,100 +22,82 @@ struct ScanScreen: View {
 	}
 
     var body: some View {
-		NavigationStack {
-			ZStack {
-				Color.background
-					.ignoresSafeArea()
-				NotebookGrid(cellSize: 40)
-					.foregroundStyle(Color.cletka)
-					.ignoresSafeArea()
+		ZStack {
+			Color.background
+				.ignoresSafeArea()
+			NotebookGrid(cellSize: 40)
+				.foregroundStyle(Color.cletka)
+				.ignoresSafeArea()
+			
+			VStack() {
+				VechicleIdField
 				
-				VStack() {
-					VechicleIdField
-					
-					Picker("", selection: $mainScreenViewModel.recorder.segmentType) {
-						ForEach(RequestModel.SegmentType.allCases, id: \.self) { type in
-							Text(type.rawValue).tag(type)
-								
-						}
-					}
-					
-					.pickerStyle(.menu)
-					.accentColor(.white)
+				segmentTypePicker
+				
+				LiveWaveformView(samples: mainScreenViewModel.recorder.waveformSamples, isRecording: mainScreenViewModel.recorder.isRecording)
+					.frame(height: 100)
 					.padding(.horizontal)
-					.frame(maxWidth: .infinity, alignment: .leading)
-					.frame(height: 40)
-					.background(
-						RoundedRectangle(cornerRadius: 10)
-							.stroke(Color.accent, lineWidth: 3)
-					)
-					.padding()
-					
-					LiveWaveformView(samples: mainScreenViewModel.recorder.waveformSamples, isRecording: mainScreenViewModel.recorder.isRecording)
-						.frame(height: 100)
-						.padding(.horizontal)
-					HStack {
-						Button {
-							logger.info("Stop button tapped")
-							if mainScreenViewModel.recorder.isRecording {
-								logger.debug("Stopping active recording")
-								mainScreenViewModel.recorder.stopRecording()
-							} else if mainScreenViewModel.recorder.canContinueRecording {
-								logger.debug("Continuing recording session")
-								mainScreenViewModel.recorder.continueRecording()
-							} else {
-								mainScreenViewModel.recorder.startRecording()
-							}
-						} label: {
-							ZStack {
-								RoundedRectangle(cornerRadius: 15)
-									.foregroundStyle(Color.accent)
-									.frame(width: 150, height: 50)
-									.opacity(0.3)
-								RoundedRectangle(cornerRadius: 15)
-									.stroke(lineWidth: 3)
-									.foregroundStyle(Color.accent)
-								
-									.frame(width: 150, height: 50)
-								Text(stopOrContinueLabel)
-									.foregroundStyle(Color.white)
-									.font(.custom("Orbitron-Bold", size: 24))
-							}
+				HStack {
+					Button {
+						logger.info("Stop button tapped")
+						if mainScreenViewModel.recorder.isRecording {
+							logger.debug("Stopping active recording")
+							mainScreenViewModel.recorder.stopRecording()
+						} else if mainScreenViewModel.recorder.canContinueRecording {
+							logger.debug("Continuing recording session")
+							mainScreenViewModel.recorder.continueRecording()
+						} else {
+							mainScreenViewModel.recorder.startRecording()
 						}
-						.padding(.trailing)
-						
-						Button {
-							logger.info("Send button tapped")
-							if mainScreenViewModel.recorder.isRecording {
-								logger.debug("Stopping active recording before upload")
-								mainScreenViewModel.recorder.stopRecording()
-							}
-							logger.info("Initiating upload and navigating to result screen")
-							mainScreenViewModel.recorder.uploadLastRecording()
-							withAnimation(.easeInOut(duration: 0.4)) {
-								mainScreenViewModel.screen = .result
-							}
-						} label: {
-							ZStack {
-								RoundedRectangle(cornerRadius: 15)
-									.foregroundStyle(Color.accent)
-									.frame(width: 150, height: 50)
-									.opacity(0.3)
-								RoundedRectangle(cornerRadius: 15)
-									.stroke(lineWidth: 3)
-									.foregroundStyle(Color.accent)
-								
-									.frame(width: 150, height: 50)
-								Text(mainScreenViewModel.recorder.isUploading ? "Sending..." : "Send")
-									.foregroundStyle(Color.white)
-									.font(.custom("Orbitron-Bold", size: 24))
-							}
+					} label: {
+						ZStack {
+							RoundedRectangle(cornerRadius: 15)
+								.foregroundStyle(Color.accent)
+								.frame(width: 150, height: 50)
+								.opacity(0.3)
+							RoundedRectangle(cornerRadius: 15)
+								.stroke(lineWidth: 3)
+								.foregroundStyle(Color.accent)
+							
+								.frame(width: 150, height: 50)
+							Text(stopOrContinueLabel)
+								.foregroundStyle(Color.white)
+								.font(.custom("Orbitron-Bold", size: 24))
 						}
-						.padding(.leading)
 					}
+					.padding(.trailing)
+					
+					Button {
+						logger.info("Send button tapped")
+						if mainScreenViewModel.recorder.isRecording {
+							logger.debug("Stopping active recording before upload")
+							mainScreenViewModel.recorder.stopRecording()
+						}
+						logger.info("Initiating upload and navigating to result screen")
+						mainScreenViewModel.recorder.uploadLastRecording()
+						withAnimation(.easeInOut(duration: 0.4)) {
+							mainScreenViewModel.screen = .result
+						}
+					} label: {
+						ZStack {
+							RoundedRectangle(cornerRadius: 15)
+								.foregroundStyle(Color.accent)
+								.frame(width: 150, height: 50)
+								.opacity(0.3)
+							RoundedRectangle(cornerRadius: 15)
+								.stroke(lineWidth: 3)
+								.foregroundStyle(Color.accent)
+							
+								.frame(width: 150, height: 50)
+							Text(mainScreenViewModel.recorder.isUploading ? "Sending..." : "Send")
+								.foregroundStyle(Color.white)
+								.font(.custom("Orbitron-Bold", size: 24))
+						}
+					}
+					.padding(.leading)
 				}
-				
 			}
+			
 		}
     }
 }
@@ -174,6 +156,34 @@ extension ScanScreen {
 				.stroke(Color.accent, lineWidth: 3)
 		)
 		.padding()
+	}
+	
+	var segmentTypePicker: some View {
+		HStack(spacing: 30) {
+			ForEach(RequestModel.SegmentType.allCases, id: \.self) { type in
+				Button {
+					mainScreenViewModel.recorder.segmentType = type
+				} label: {
+					Text(type.rawValue)
+						.font(.system(size: 14, weight: .medium))
+						.foregroundStyle(mainScreenViewModel.recorder.segmentType == type ? Color.white : Color.white.opacity(0.5))
+						.padding(.vertical, 10)
+						.padding(.horizontal, 16)
+						.background(
+							RoundedRectangle(cornerRadius: 8)
+								.fill(mainScreenViewModel.recorder.segmentType == type ? Color.accent.opacity(0.3) : Color.clear)
+						)
+						.overlay(
+							RoundedRectangle(cornerRadius: 8)
+								.stroke(mainScreenViewModel.recorder.segmentType == type ? Color.accent : Color.gray, lineWidth: 2)
+						)
+				}
+			
+			}
+		}
+		.padding(.horizontal)
+		.frame(maxWidth: .infinity, alignment: .leading)
+		.padding(.horizontal)
 	}
 }
 
