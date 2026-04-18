@@ -1,3 +1,4 @@
+
 # EngineChecker
 
 iOS-приложение для диагностики двигателя по звуку. Записывает аудио с микрофона (или импортирует ZIP-архив с записями), отправляет на сервер классификации и показывает результат: **здоров** или **аномалия**.
@@ -54,3 +55,7 @@ EngineChecker/
 1. Открыть `EngineChecker.xcodeproj` в Xcode
 2. Выбрать симулятор или устройство
 3. Build & Run (⌘R)
+
+<img width="640" height="1140" alt="photo_2026-04-18 1 45 37 PM" src="https://github.com/user-attachments/assets/9a1c29d8-1efa-4434-963e-0ea624c1d2e2" />
+<img width="582" height="1162" alt="photo_2026-04-18 1 45 21 PM" src="https://github.com/user-attachments/assets/7c247e09-029d-4cf4-8cbc-819730a41e29" />
+<img width="648" height="1180" alt="photo_2026-04-18 1 45 10 PM" src="https://github.com/user-attachments/assets/92328c66-e5ae-4183-88b3-558fa265dbf7" />
